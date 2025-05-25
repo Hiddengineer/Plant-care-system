@@ -12,14 +12,14 @@ const int waterPumpPin = 26;
 const int growLightPin = 27;
 const int moistureSensorPin1 = 32;
 const int moistureSensorPin2 = 33;
+const int sensorPowerPin = 25;
 
 bool growLightOn = false;
-bool growLightAutoMode = true; // start with auto mode
+bool growLightAutoMode = true;
 int sunriseHour = 6;
 int sunsetHour = 20;
-int moistureThreshold = 500;
 
-NetworkServer server(80);
+WiFiServer server(80);
 
 void setup() {
   Serial.begin(115200);
@@ -35,10 +35,11 @@ void setup() {
   pinMode(growLightPin, OUTPUT);
   pinMode(moistureSensorPin1, INPUT);
   pinMode(moistureSensorPin2, INPUT);
+  pinMode(sensorPowerPin, OUTPUT);
+  digitalWrite(sensorPowerPin, HIGH);  // power on sensor
 
   server.begin();
 
-  // Start with the light off
   digitalWrite(growLightPin, LOW);
 }
 
@@ -54,10 +55,8 @@ void toggleGrowLight() {
   digitalWrite(growLightPin, growLightOn ? HIGH : LOW);
 
   if (!growLightOn) {
-    // If turned off manually, re-enable auto mode
     growLightAutoMode = true;
   } else {
-    // If turned on manually, disable auto mode
     growLightAutoMode = false;
   }
 }
@@ -95,17 +94,17 @@ void handleUpdateTime(String line) {
   }
 }
 
-String getMoistureStatus(int sensorPin) {
-  int moisture = analogRead(sensorPin);
-  if (moisture < moistureThreshold) {
-    return "<span style='color:green'>Full</span>";
+String getTankStatus(int sensorPin) {
+  int sensorState = digitalRead(sensorPin);
+  if (sensorState == HIGH) {
+    return "<div style='width:50px; height:50px; background:red; border-radius:50%; display:inline-block;'></div> Empty";
   } else {
-    return "<span style='color:red'>Empty</span>";
+    return "<div style='width:50px; height:50px; background:green; border-radius:50%; display:inline-block;'></div> Full";
   }
 }
 
 void loop() {
-  NetworkClient client = server.accept();
+  WiFiClient client = server.available();
   if (client) {
     Serial.println("New Client.");
     String currentLine = "";
@@ -116,23 +115,27 @@ void loop() {
         Serial.write(c);
         if (c == '\n') {
           if (currentLine.length() == 0) {
-            // Send webpage
             client.println("HTTP/1.1 200 OK");
             client.println("Content-type:text/html");
             client.println();
 
-            client.println("<html><body>");
+            client.println("<html>");
+            client.println("<head>");
+            client.println("<title>Plant Care</title>");
+            client.println("<meta http-equiv='refresh' content='5'>"); // Auto-refresh every 5 seconds
+            client.println("</head><body>");
             client.println("<h2>Plant Care System</h2>");
             client.println("<a href=\"/Water\">Water the Plant</a><br>");
             client.println("<a href=\"/Light\">Toggle Grow Light</a><br>");
             client.println("<form action=\"/UpdateTime\" method=\"GET\">");
-            client.println("Sunrise Hour: <input type=\"text\" name=\"sunrise\" value=\"" + String(sunriseHour) + "\"><br>");
-            client.println("Sunset Hour: <input type=\"text\" name=\"sunset\" value=\"" + String(sunsetHour) + "\"><br>");
+            client.println("Sunrise Hour: <input type=\"number\" name=\"sunrise\" value=\"" + String(sunriseHour) + "\"><br>");
+            client.println("Sunset Hour: <input type=\"number\" name=\"sunset\" value=\"" + String(sunsetHour) + "\"><br>");
             client.println("<input type=\"submit\" value=\"Update Time\"></form>");
 
             // Moisture Sensor Status
-            client.println("<p>Moisture Sensor 1: " + getMoistureStatus(moistureSensorPin1) + "</p>");
-            client.println("<p>Moisture Sensor 2: " + getMoistureStatus(moistureSensorPin2) + "</p>");
+            client.println("<h3>Tank Status</h3>");
+            client.println("<p>Tank 1: " + getTankStatus(moistureSensorPin1) + "</p>");
+            client.println("<p>Tank 2: " + getTankStatus(moistureSensorPin2) + "</p>");
 
             client.println("</body></html>");
             client.println();
@@ -145,25 +148,21 @@ void loop() {
           currentLine += c;
         }
 
-        // Handle requests
         if (currentLine.endsWith("GET /Water")) {
           waterPlant();
         }
-
         if (currentLine.endsWith("GET /Light")) {
           toggleGrowLight();
         }
-
         if (currentLine.startsWith("GET /UpdateTime")) {
           handleUpdateTime(currentLine);
         }
       }
     }
 
-    // Check sensors for auto-watering
-    int moisture1 = analogRead(moistureSensorPin1);
-    if (moisture1 < moistureThreshold) {
-      Serial.println("Soil is dry! Auto-watering...");
+    // Auto-watering if either sensor is HIGH (dry)
+    if (digitalRead(moistureSensorPin1) == HIGH || digitalRead(moistureSensorPin2) == HIGH) {
+      Serial.println("Auto-watering triggered by dry sensor!");
       waterPlant();
     }
 
